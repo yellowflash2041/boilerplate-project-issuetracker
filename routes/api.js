@@ -19,7 +19,7 @@ module.exports = function (app) {
       if (query._id) {
         query._id = new ObjectId(query._id);
       }
-      if (query.open === '' || query.open === 'true') {
+      if (query.open === 'true') {
         query.open = true;
       }
       else if (query.open === 'false') {
@@ -39,7 +39,7 @@ module.exports = function (app) {
             if (err === null) {
               res.json(docs);
             } else {
-              res.json(err);
+              res.send(err);
             }
           });
         });
@@ -51,7 +51,7 @@ module.exports = function (app) {
           if (err === null) {
             res.json(docs);
           } else {
-            res.json(err);
+            res.send(err);
           }
         });
       }
@@ -79,8 +79,8 @@ module.exports = function (app) {
           }
         }
       }
-      newIssue.created_on = Date.now();
-      newIssue.updated_on = Date.now();
+      newIssue.created_on = new Date().toISOString();
+      newIssue.updated_on = new Date().toISOString();
 
       if (newIssue.issue_title && newIssue.issue_text && newIssue.created_by) {
         if (client.topology === undefined) {
@@ -97,7 +97,7 @@ module.exports = function (app) {
                 newIssue._id = result.insertedIds[0];
                 res.json(newIssue);
               } else {
-                res.json(err);
+                res.send(err);
               }
             });
           });
@@ -110,12 +110,12 @@ module.exports = function (app) {
               newIssue._id = result.insertedIds[0];
               res.json(newIssue);
             } else {
-              res.json(err);
+              res.send(err);
             }
           });
         }
       } else {
-        res.send('Sorry, but "issue_title", "issue_text" and "created_by" are all required');
+        res.json({ error: 'required field(s) missing' });
       }
     })
     
@@ -125,11 +125,16 @@ module.exports = function (app) {
       const inputs = req.body;
       const issueID = xssFilters.inHTMLData(inputs._id);
 
+      if (issueID === 'undefined') {
+        res.json({ error: 'missing _id' });
+        return;
+      }
+
       delete inputs._id; // Delete from object to check if all other inputs are empty.
       for (const input in inputs) {
         if (Object.hasOwnProperty.call(inputs, input)) {
           const element = inputs[input];
-          if (!element && input !== 'open') {
+          if (!element) {
             delete inputs[input];
           } else {
             inputs[input] = xssFilters.inHTMLData(element);
@@ -140,8 +145,7 @@ module.exports = function (app) {
       if (Object.keys(inputs).length > 0) {
         // Assigned here just to meet the user stories.
         // If assigned before, an empty form could be sent.
-        inputs.open = !inputs.open;
-        inputs.updated_on = Date.now();
+        inputs.updated_on = new Date().toISOString();
 
         if (client.topology === undefined) {
           client.connect((err) => {
@@ -152,42 +156,63 @@ module.exports = function (app) {
             const db = client.db(dbName);
 
             const collection = db.collection(project);
-            collection.updateOne(
-              { _id: new ObjectId(issueID) },
-              { $set: inputs },
-              (err, result) => {
-                if (err === null) {
-                  res.send('successfully updated');
-                } else {
-                  res.json(err);
+            try {
+              collection.updateOne(
+                { _id: new ObjectId(issueID) },
+                { $set: inputs },
+                (err, result) => {
+                  if (err === null) {
+                    if (result.modifiedCount === 0) {
+                      res.json({ error: 'could not update', '_id': issueID });
+                    } else {
+                      res.json({ result: 'successfully updated', '_id': issueID });
+                    }
+                  } else {
+                    res.send(err);
+                  }
                 }
-              }
-            );
+              );
+            } catch (error) {
+              res.json({ error: 'could not update', '_id': issueID });
+            }
           });
         } else {
           const db = client.db(dbName);
 
           const collection = db.collection(project);
-          collection.updateOne(
-            { _id: new ObjectId(issueID) },
-            { $set: inputs },
-            (err, result) => {
-              if (err === null) {
-                res.send('successfully updated');
-              } else {
-                res.json(err);
+          try {
+            collection.updateOne(
+              { _id: new ObjectId(issueID) },
+              { $set: inputs },
+              (err, result) => {
+                if (err === null) {
+                  if (result.modifiedCount === 0) {
+                    res.json({ error: 'could not update', '_id': issueID });
+                  } else {
+                    res.json({ result: 'successfully updated', '_id': issueID });
+                  }
+                } else {
+                  res.send(err);
+                }
               }
-            }
-          );
+            );
+          } catch (error) {
+            res.json({ error: 'could not update', '_id': issueID });
+          }
         }
       } else {
-        res.send('no updated field sent');
+        res.json({ error: 'no update field(s) sent', '_id': issueID });
       }
     })
     
     .delete(function (req, res){
       let project = req.params.project;
       const issueID = req.body._id;
+
+      if (issueID === undefined) {
+        res.json({ error: 'missing _id' });
+        return;
+      }
 
       if (issueID) {
         if (client.topology === undefined) {
@@ -199,28 +224,44 @@ module.exports = function (app) {
             const db = client.db(dbName);
 
             const collection = db.collection(project);
-            collection.deleteOne({ _id: new ObjectId(issueID) }, (err, result) => {
-              if (err === null) {
-                res.send(`deleted ${issueID}`);
-              } else {
-                res.json(err);
-              }
-            });
+            try {
+              collection.deleteOne({ _id: new ObjectId(issueID) }, (err, result) => {
+                if (err === null) {
+                  if (result.deletedCount === 0) {
+                    res.json({ error: 'could not delete', '_id': issueID });
+                  } else {
+                    res.json({ result: 'successfully deleted', '_id': issueID });
+                  }
+                } else {
+                  res.send(`could not delete ${issueID}`);
+                }
+              });
+            } catch (error) {
+              res.json({ error: 'could not delete', '_id': issueID });
+            }
           });
         } else {
           const db = client.db(dbName);
 
           const collection = db.collection(project);
-          collection.deleteOne({ _id: new ObjectId(issueID) }, (err, result) => {
-            if (err === null) {
-              res.send(`deleted ${issueID}`);
-            } else {
-              res.json(err);
-            }
-          });
+          try {
+            collection.deleteOne({ _id: new ObjectId(issueID) }, (err, result) => {
+              if (err === null) {
+                if (result.deletedCount === 0) {
+                  res.json({ error: 'could not delete', '_id': issueID });
+                } else {
+                  res.json({ result: 'successfully deleted', '_id': issueID });
+                }
+              } else {
+                res.send(`could not delete ${issueID}`);
+              }
+            });
+          } catch (error) {
+            res.json({ error: 'could not delete', '_id': issueID });
+          }
         }
       } else {
-        res.send('_id error');
+        res.send({});
       }
     });
     
